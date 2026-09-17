@@ -41,3 +41,17 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') - Starting daily TASE scan..." | tee -a "$LOG
 python3 "$DIR/tase_swing_scan.py" --out "$DIR/out" "$@" 2>&1 | tee -a "$LOG_FILE"
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') - Daily scan completed successfully. Report written to $DIR/out/tase_swing_scan_$STAMP.md" | tee -a "$LOG_FILE"
+
+# 6) Auto-commit & push reports to GitHub
+echo "$(date '+%Y-%m-%d %H:%M:%S') - Syncing scan reports to GitHub..." | tee -a "$LOG_FILE"
+git add "$DIR/out/tase_swing_scan_$STAMP.md" "$DIR/out/tase_swing_scan_$STAMP.csv"
+if ! git diff --cached --quiet; then
+  git commit -m "chore(scan): daily scan report $STAMP"
+  # Pull remote updates first in case of Dependabot PRs or edits
+  git pull --rebase origin main || true
+  git push origin main
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - Successfully pushed scan reports to GitHub." | tee -a "$LOG_FILE"
+else
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - Scan report already up to date on GitHub." | tee -a "$LOG_FILE"
+fi
+
