@@ -351,61 +351,94 @@ def evaluate(
     low5 = float(l.iloc[-5:].min())
     low10 = float(l.iloc[-10:].min())
 
-    # --- context gates -----------------------------------------------------
+    # --- Context Gates & Qualification Filters -----------------------------
+    # 1. Macro Trend Stack:
+    #    Requires Close > 50 EMA > 200 SMA, with the 50 EMA rising over the past 5 sessions.
+    #    This ensures we only trade in established Stage 2 institutional uptrends.
     enough_history = len(c) >= params.sma_long + 5
     trend_ok = bool(
         enough_history
         and close > e50.iloc[-1] > s200.iloc[-1]
         and e50.iloc[-1] > e50.iloc[-6]
     )
-    # RS passes if the line is at (within 0.5% of) its 20-day high, or simply
-    # higher than 20 bars ago - "rising or breaking out".
+
+    # 2. Relative Strength (RS):
+    #    RS line = Stock / Benchmark Index. Must be at (within 0.5% of) its 20-day high
+    #    or higher than it was 20 bars ago. We only buy leaders, never laggards.
     rs_window = rs_line.iloc[-params.rs_len:]
     rs_ok = bool(
         rs_line.iloc[-1] >= rs_window.max() * 0.995
         or rs_line.iloc[-1] > rs_line.iloc[-params.rs_len - 1]
     )
+
+    # 3. Minimum Liquidity Filter:
+    #    20-day average turnover must exceed the threshold (default: 1,000,000 ILS).
+    #    Protects traders from illiquidity, wide spreads, and execution slippage.
     liq_ok = bool(turnover20.iloc[-1] >= params.min_turnover_ils)
+
+    # 4. Volume Expansion Gate:
+    #    Today's volume must be >= 1.5x the 20-day volume SMA for breakout confirmation.
     vol_ok = bool(v.iloc[-1] >= params.vol_mult * vol20.iloc[-1])
 
-    # --- setups --------------------------------------------------------------
+    # --- Setup Detection: Pullback vs. Breakout ----------------------------
+    # Setup A: Pullback to 20 EMA in an established uptrend
+    # - RSI(14) must have cooled into the 40-50 zone within the last 3 sessions (orderly digestion)
+    # - Price touched the 20 EMA zone (within 1 ATR of 20 EMA) in the last 5 sessions
+    # - Today confirmed the bounce: closed above the 20 EMA and higher than yesterday's close
     recent_rsi = rsi14.iloc[-params.pullback_window:]
     rsi_in_zone = bool(
         ((recent_rsi >= params.rsi_pullback_low) & (recent_rsi <= params.rsi_pullback_high)).any()
     )
-    # A pullback "touched" the 20 EMA zone if a low in the last 5 bars came
-    # within one ATR of it; the entry day must close back above the 20 EMA
-    # and above the prior close (turn-up), not just sit in the zone.
     touched_e20 = bool(low5 <= float(e20.iloc[-1]) + a)
     turning_up = bool(close > e20.iloc[-1] and close > c.iloc[-2])
     pullback_candidate = trend_ok and rsi_in_zone and touched_e20 and turning_up
 
-    # Breakout = close above the prior 20-day high on >= 1.5x average volume.
+    # Setup B: 20-Day Range Breakout
+    # - Close exceeds the highest high of the prior 20 sessions (excluding today)
+    # - Confirmed by institutional volume expansion (>= 1.5x 20-day average)
     breakout_candidate = trend_ok and close > prior_high and vol_ok
 
+    # --- Initial Trigger & Structural Stop Sizing -------------------------
+    # Stops are set below swing structure with a 0.5 ATR volatility buffer:
+    # - Pullback stop: 5-day low minus 0.5 ATR
+    # - Breakout stop: 10-day low minus 0.5 ATR
     trigger, stop, notes = "NONE", None, []
     if breakout_candidate:
         trigger, stop = "BREAKOUT", low10 - params.stop_buffer_atr * a
     elif pullback_candidate:
         trigger, stop = "PULLBACK", low5 - params.stop_buffer_atr * a
 
-    # --- risk tests ------------------------------------------------------------
+    # --- Risk Verification & Structural Filters ---------------------------
+    # $1R$ is the risk per share: Close - Stop Price.
     r1 = (close - stop) if stop is not None else None
     if trigger != "NONE":
         if r1 <= 0:
-            # Defensive: a stop above the close means the structure is broken.
+            # Defensive check: stop is mathematically at or above close (broken structure)
             trigger, notes = "NONE", notes + ["stop above close"]
         elif r1 > params.max_r_atr * a:
+            # 1R Risk Limit: Reject setups where risk exceeds 2.0x ATR (stops too far away)
             trigger, notes = "NONE", notes + ["1R > 2xATR"]
         else:
+            # 2R Resistance Test: Check if major overhead resistance (52-week high) is at least
+            # 2R away from entry, ensuring an asymmetric risk/reward trade.
+            # Skipped if the stock is already at/making new 52-week highs (blue-sky breakout).
             at_high = close >= hi52 * 0.999
             room = hi52 - close
             if not at_high and room < params.min_rr_to_resistance * r1:
                 trigger, notes = "NONE", notes + ["52w high < 2R away"]
 
-    # --- context gates applied last so the note explains what blocked -----------
+    # --- Context Gates Filter ----------------------------------------------
+    # Context gates (Market Regime, Sector Group, Relative Strength, Trend, Liquidity)
+    # are checked last so the 'Notes' column explains exactly why a setup was rejected
+    # (e.g. 'gate fail: RS,group').
     if trigger != "NONE":
-        gates = {"trend": trend_ok, "RS": rs_ok, "liquidity": liq_ok, "group": group_ok, "regime": regime_ok}
+        gates = {
+            "trend": trend_ok,
+            "RS": rs_ok,
+            "liquidity": liq_ok,
+            "group": group_ok,
+            "regime": regime_ok,
+        }
         failed = [name for name, ok in gates.items() if not ok]
         if failed:
             trigger, notes = "NONE", notes + [f"gate fail: {','.join(failed)}"]

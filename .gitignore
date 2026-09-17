@@ -1,9 +1,52 @@
+# Environments & Dependencies
 .venv/
+env/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Bytecode & Caches
 __pycache__/
 *.py[cod]
 *$py.class
-logs/
-.DS_Store
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.cache/
+
+# Sensitive & Secret Files (Zero-Secret Architecture)
 .env
 .env.*
-.cache/
+*.env
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+*.token
+*secrets*
+*credentials*
+credentials.json
+client_secret*.json
+
+# Logs & Runtime Output
+logs/
+*.log
+
+# OS & Workspace Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

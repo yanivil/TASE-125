@@ -1,85 +1,96 @@
-# tase-swing-scanner
+# TASE-125: Swing Trading Scanner
 
-Screens the TA-35 universe (36 names as of September 2026) against the
-**Swing Trading Framework — TASE (v2)** rulebook and writes a table with a
-`Trigger` column per ticker: `PULLBACK`, `BREAKOUT`, or `NONE` with the reason.
+[![tests](https://github.com/yanivil/TASE-125/actions/workflows/tests.yml/badge.svg)](https://github.com/yanivil/TASE-125/actions/workflows/tests.yml)
+[![python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)](https://www.python.org/)
+[![security](https://img.shields.io/badge/security-zero--credential-success)](SECURITY.md)
+[![dependabot](https://img.shields.io/badge/dependabot-enabled-blue.svg?logo=dependabot)](.github/dependabot.yml)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-The rulebook itself lives in `swing-trading-framework.md`. This tool automates
-the parts that are arithmetic. It does **not** replace the calendar, execution
-and broker checks, which stay manual.
+**TASE-125** is an automated quantitative swing scanner for the Tel Aviv Stock Exchange (TASE). It screens equities daily against the rules of the **Swing Trading Framework — TASE (v2)**, reporting only confirmed setups with defined entry, structural stop-loss, and 2R profit targets.
 
-## Install and run
+---
+
+## 📚 Project Documentation & Wiki
+
+Detailed guides, mathematical definitions, and operational manuals are available in the **[Project Wiki](docs/wiki/Home.md)**:
+
+- **[01. Architecture & Pipeline](docs/wiki/01-Architecture-and-Pipeline.md)** — Data pipeline, Agorot-to-ILS logic, and benchmark fallbacks.
+- **[02. Trading Framework & Setups](docs/wiki/02-Trading-Framework-and-Setups.md)** — In-depth breakdown of `PULLBACK` and `BREAKOUT` triggers, stop calculations, and 2R targets.
+- **[03. Context Gates & Market Regime](docs/wiki/03-Context-Gates-and-Market-Regime.md)** — Market regime, breadth, sector group composites, and relative strength (RS).
+- **[04. Automation & Operations](docs/wiki/04-Automation-and-Operations.md)** — Daily scheduler (`run_daily.sh`), weekend filters, and trader pre-order checklist.
+- **[05. Security & Integrity](docs/wiki/05-Security-and-Integrity.md)** — Zero-credential model, Dependabot configuration, and vulnerability reporting.
+
+---
+
+## 🚀 Quickstart
+
+### Installation
 
 ```bash
-pip install yfinance pandas numpy
-python tase_swing_scan.py            # live scan -> ./out/
-python tase_swing_scan.py --demo     # offline pipeline test on synthetic data
-python tase_swing_scan.py --out results --min-turnover 2000000
+# Clone the repository
+git clone https://github.com/yanivil/TASE-125.git
+cd TASE-125
+
+# Setup virtual environment and dependencies
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt pytest
 ```
 
-Run it after the closing auction (after ~17:30 Israel time Mon–Thu) so the
-last bar is a full session. Do not act on a scan run mid-session: the trigger
-rules are defined on daily closes.
+### Running the Scanner
 
-## Data
+```bash
+# 1. Offline demo test (synthetic random-walk data, deterministic verification)
+python3 tase_swing_scan.py --demo
 
-- Source: Yahoo Finance via `yfinance`. TASE symbols use the `.TA` suffix
-  (`POLI.TA`, `LUMI.TA`, …). Most are quoted in **agorot** (`ILA`); price
-  levels in the output are left in the quote unit so they match your broker.
-  The turnover screen converts to ILS internally.
-- Benchmark for regime and relative strength: `^TA125.TA`, then `^TA35.TA`,
-  then an equal-weight composite of the universe if neither downloads. The
-  Markdown header states which one was used.
-- Sector confirmation uses an equal-weight composite of the group members
-  (Banks, Insurance, RealEstate, Energy, Tech, Defense, Other) because TASE's
-  official sector indices are not on Yahoo. It is a proxy, not TA-Banks5.
-- Universe is a hand-maintained list in `UNIVERSE`. Update it after each
-  semi-annual index update (May / November) and any fast-track addition.
+# 2. Live daily scan (downloads latest daily bars from Yahoo Finance)
+python3 tase_swing_scan.py
 
-## Rules encoded (all thresholds in `Params`)
+# 3. Custom output directory and liquidity threshold
+python3 tase_swing_scan.py --out out --min-turnover 2000000
 
-| Rule | Implementation |
+# 4. Run full test suite
+pytest -v
+```
+
+---
+
+## ⏰ Daily Automation
+
+The scanner includes an automated runner [`run_daily.sh`](run_daily.sh) configured to execute at **21:00 Israel Time** Monday through Friday:
+
+```bash
+./run_daily.sh
+```
+
+- **Weekend Guard**: Automatically skips execution on Saturday and Sunday.
+- **Output**: Generates both a machine-readable CSV and a GitHub-Flavoured Markdown table in `./out/`.
+- **Logs**: Preserves execution timestamps and console metrics in `./logs/`.
+
+---
+
+## 📊 Summary of Encoded Rules
+
+| Rule | Technical Specification |
 |---|---|
-| Market regime | benchmark close > 50 EMA and 50 EMA higher than 5 bars ago |
-| Group confirmation | group composite close > rising 50 EMA |
-| Trend stack | close > 50 EMA > 200 SMA, 50 EMA rising |
-| Relative strength | RS line (stock ÷ benchmark) at its 20-day high (±0.5%) or above its value 20 bars ago |
-| Liquidity | 20-day average turnover ≥ 1,000,000 ILS (`--min-turnover`) |
-| Pullback trigger | RSI(14) touched 40–50 within the last 3 bars, a low in the last 5 bars came within 1 ATR of the 20 EMA, and today closed above the 20 EMA and above yesterday's close |
-| Breakout trigger | close above the prior 20-day high on volume ≥ 1.5× the 20-day average |
-| Stop | pullback: 5-day low − 0.5 ATR; breakout: 10-day low − 0.5 ATR |
-| 1R test | 1R (close − stop) must be ≤ 2 × ATR(14) |
-| 2R test | 52-week high must be ≥ 2R above the close (skipped if already at the high) |
-| Target 1 | close + 2R (sell 50%; move stop to entry + costs) |
+| **Market Regime** | Benchmark (`^TA125.TA`) close > rising 50 EMA |
+| **Group Confirmation** | Sector composite close > rising 50 EMA |
+| **Trend Stack** | Close > 50 EMA > 200 SMA, with 50 EMA rising |
+| **Relative Strength** | RS line (stock ÷ benchmark) at/near 20-day high (±0.5%) or higher than 20 bars ago |
+| **Liquidity Floor** | 20-day average daily turnover $\ge$ 1,000,000 ILS (`--min-turnover`) |
+| **Pullback Trigger** | RSI(14) in 40–50 zone within last 3 bars; low within 1 ATR of 20 EMA; closes above 20 EMA & yesterday's close |
+| **Breakout Trigger** | Close above prior 20-day high on volume $\ge$ 1.5× 20-day volume average |
+| **Structural Stop** | Pullback: 5-day low − 0.5 ATR; Breakout: 10-day low − 0.5 ATR |
+| **1R Max Risk Limit** | $1R$ ($\text{Close} - \text{Stop}$) must be $\le 2 \times \text{ATR}(14)$ |
+| **2R Clearance Test** | 52-week high must be $\ge 2R$ above entry (skipped if already at 52-week high) |
+| **Take Profit 1 (T1)** | $\text{Close} + 2R$ (sell 50%; move stop to breakeven + costs) |
 
-Context gates are applied last so the `Notes` column says exactly which gate
-blocked an otherwise valid setup (`gate fail: RS,group`).
+---
 
-## Output columns
+## 🔒 Security
 
-`Ticker, Company, Industry, Listing, Close, RSI14, Trend, RS, Liq, Group,
-State, Trigger, Stop, 1R, T1 (+2R), Turnover20 (ILS), LastBar, Notes`
-
-`State` classifies non-triggered names: `Below MA stack`, `At 52w high`,
-`Base under high` (within 5%), `Extended` (RSI > 60), `Pullback zone`,
-`Trend, no trigger`, `Insufficient history`, `NO DATA`.
-
-## What stays manual before any order
-
-- Calendar: BoI decision, earnings, ex-dividend, index update, holiday eves.
-- Execution: continuous trading after 10:30, never a Friday session.
-- Dual-listed names: half size and wider stop, or exclude — the scan flags
-  the listing but applies the same rules to both buckets.
-- Broker mechanics: stop-order type, minimum order value, commissions.
-
-## Known limitations
-
-- Yahoo's TASE feed occasionally drops sessions or lags a day; the `Notes`
-  column flags a last bar older than 5 days as `stale data`.
-- Yahoo symbols for recent listings can differ from the TASE ticker. For
-  example, Palo Alto Networks trades on TASE as `CYBR.TA` (inherited from
-  CyberArk). A wrong symbol shows up under "Download failures" and as `NO DATA`.
-- ATR and RSI use Wilder smoothing (TradingView default). A simple-average ATR
-  differs by a few percent.
-- Dividends are not back-adjusted (`auto_adjust=False`) so levels match the
-  chart; a large ex-dividend gap inside the ATR window inflates ATR slightly.
+This project follows strict security best practices:
+- **Zero-Secret Architecture**: Requires no API keys, tokens, or private credentials.
+- **Secret Scanning & Push Protection**: Active on the GitHub repository.
+- **Automated Dependency Updates**: Managed weekly via Dependabot (`.github/dependabot.yml`).
+- **Security Policy**: See [SECURITY.md](SECURITY.md) for vulnerability disclosure guidelines.
